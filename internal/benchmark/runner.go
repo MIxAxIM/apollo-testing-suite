@@ -2,7 +2,7 @@ package benchmark
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"math/rand"
 	"os"
 	"runtime"
@@ -23,27 +23,51 @@ type Result struct {
 	Error    error
 }
 
-func Run(utxoCount, iterations, parallelism int, backend string, outputFormat string, cpuProfile string) {
+func Run(utxoCount, iterations, parallelism int, backend string, outputFormat string, cpuProfile string,
+	maestroNetworkID int, maestroAPIKey string,
+	blockfrostAPIURL string, blockfrostNetworkID int, blockfrostAPIKey string,
+	ogmiosEndpoint string, kugoEndpoint string,
+	utxorpcEndpoint string, utxorpcNetworkID int, utxorpcAPIKey string) {
 
-	ctx, err := GetChainContext(backend)
+	slog.Info("Starting benchmark run",
+		"utxoCount", utxoCount,
+		"iterations", iterations,
+		"parallelism", parallelism,
+		"backend", backend,
+		"outputFormat", outputFormat,
+		"cpuProfile", cpuProfile)
+
+	ctx, err := GetChainContext(backend,
+		maestroNetworkID, maestroAPIKey,
+		blockfrostAPIURL, blockfrostNetworkID, blockfrostAPIKey,
+		ogmiosEndpoint, kugoEndpoint,
+		utxorpcEndpoint, utxorpcNetworkID, utxorpcAPIKey)
 	if err != nil {
-		log.Fatalf("Critical error getting backend chain context: %v", err)
+		slog.Error("Critical error getting backend chain context", "error", err)
+		os.Exit(1)
 	}
+	slog.Info("Chain context obtained successfully", "backend", backend)
 
 	senderWalletAddress, err := Address.DecodeAddress(TEST_WALLET_ADDRESS_1)
 	if err != nil {
-		log.Fatalf("Error decoding wallet address: %v", err)
+		slog.Error("Error decoding wallet address", "error", err)
+		os.Exit(1)
 	}
+	slog.Debug("Sender wallet address decoded", "address", senderWalletAddress.String())
 
 	receiverWalletAddress, err := Address.DecodeAddress(TEST_WALLET_ADDRESS_2)
 	if err != nil {
-		log.Fatalf("Error decoding wallet address: %v", err)
+		slog.Error("Error decoding wallet address", "error", err)
+		os.Exit(1)
 	}
+	slog.Debug("Receiver wallet address decoded", "address", receiverWalletAddress.String())
 
 	userUtxos, err := ctx.Utxos(senderWalletAddress)
 	if err != nil {
-		log.Fatalf("failed to get UTXOs: %v", err)
+		slog.Error("Failed to get UTXOs", "error", err)
+		os.Exit(1)
 	}
+	slog.Info("Fetched user UTXOs", "count", len(userUtxos))
 
 	// Aggregate & merge assets upfront
 	var assetList []apollo.Unit
@@ -51,26 +75,33 @@ func Run(utxoCount, iterations, parallelism int, backend string, outputFormat st
 		assetList = append(assetList, MultiAssetToUnits(utxo.Output.GetValue().GetAssets())...)
 	}
 	assetList = MergeUnits(assetList)
+	slog.Debug("Aggregated and merged assets", "count", len(assetList))
 
 	lastSlot, err := ctx.LastBlockSlot()
 	if err != nil {
-		log.Fatalf("failed to get last block slot: %v", err)
+		slog.Error("Failed to get last block slot", "error", err)
+		os.Exit(1)
 	}
+	slog.Info("Last block slot obtained", "slot", lastSlot)
 
 	// Warm-up phase before any measurements
 	runtime.GC()
 	time.Sleep(2 * time.Second)
+	slog.Info("Warm-up phase completed")
 
 	if cpuProfile != "" {
 		f, err := os.Create(cpuProfile)
 		if err != nil {
-			log.Fatalf("failed to create cpu profile file: %v", err)
+			slog.Error("Failed to create cpu profile file", "error", err)
+			os.Exit(1)
 		}
 		defer f.Close()
 		if err := pprof.StartCPUProfile(f); err != nil {
-			log.Fatalf("could not start CPU profile: %v", err)
+			slog.Error("Could not start CPU profile", "error", err)
+			os.Exit(1)
 		}
 		defer pprof.StopCPUProfile()
+		slog.Info("CPU profiling started", "file", cpuProfile)
 	}
 
 	var (
@@ -84,6 +115,7 @@ func Run(utxoCount, iterations, parallelism int, backend string, outputFormat st
 
 	// Actual benchmark start time
 	benchStart := time.Now()
+	slog.Info("Benchmark iterations starting", "iterations", iterations, "parallelism", parallelism)
 
 	for i := range iterations {
 		wg.Add(1)
@@ -99,6 +131,7 @@ func Run(utxoCount, iterations, parallelism int, backend string, outputFormat st
 						Error: fmt.Errorf("panic in iteration %d: %v", iter, r),
 					}
 					mu.Unlock()
+					slog.Error("Panic during iteration", "iteration", iter, "panic", r)
 				}
 			}()
 
@@ -114,15 +147,18 @@ func Run(utxoCount, iterations, parallelism int, backend string, outputFormat st
 			defer mu.Unlock()
 			if err != nil {
 				results <- Result{Error: fmt.Errorf("iteration %d: %w", iter, err)}
+				slog.Warn("Transaction build failed", "iteration", iter, "error", err)
 			} else {
 				results <- Result{Duration: elapsed}
 				totalLatency += elapsed
+				slog.Debug("Transaction built successfully", "iteration", iter, "duration", elapsed)
 			}
 		}(i)
 	}
 
 	wg.Wait()
 	close(results)
+	slog.Info("All benchmark iterations completed")
 
 	// Calculate metrics
 	benchDuration := time.Since(benchStart)
@@ -131,7 +167,7 @@ func Run(utxoCount, iterations, parallelism int, backend string, outputFormat st
 
 	for res := range results {
 		if res.Error != nil {
-			log.Printf("Error: %v", res.Error)
+			slog.Error("Error during iteration", "error", res.Error)
 			failures++
 		} else {
 			successes++
@@ -139,7 +175,8 @@ func Run(utxoCount, iterations, parallelism int, backend string, outputFormat st
 	}
 
 	if successes == 0 {
-		log.Fatal("All iterations failed! Check logs for errors.")
+		slog.Error("All iterations failed! Check logs for errors.")
+		os.Exit(1)
 	}
 
 	// Calculate accurate Tx/s metrics
@@ -148,6 +185,17 @@ func Run(utxoCount, iterations, parallelism int, backend string, outputFormat st
 
 	// For comparison: latency-based Tx/s
 	latencyTxPerSec := float64(time.Second) / float64(latencyPerTx)
+	slog.Info("Benchmark results",
+		"actualTxPerSec", actualTxPerSec,
+		"latencyTxPerSec", latencyTxPerSec,
+		"latencyPerTx", latencyPerTx,
+		"failures", failures,
+		"iterations", iterations,
+		"parallelism", parallelism,
+		"utxoCount", utxoCount,
+		"benchDuration", benchDuration,
+		"outputFormat", outputFormat)
+
 	PrintResults(
 		actualTxPerSec,
 		latencyTxPerSec,
@@ -162,6 +210,7 @@ func Run(utxoCount, iterations, parallelism int, backend string, outputFormat st
 }
 
 func buildTransaction(utxos []UTxO.UTxO, addr *Address.Address, ctx Base.ChainContext, lastSlot int, utxoCount int, assets []apollo.Unit) error {
+	slog.Debug("Building transaction", "address", addr.String(), "utxoCount", utxoCount)
 	apolloBE := apollo.New(ctx).
 		SetWalletFromBech32(addr.String()).
 		AddLoadedUTxOs(utxos...).
@@ -171,28 +220,23 @@ func buildTransaction(utxos []UTxO.UTxO, addr *Address.Address, ctx Base.ChainCo
 
 	// Add multiple outputs
 	distributedAssets := DistributeAssets(assets, utxoCount)
+	slog.Debug("Distributed assets for transaction", "numOutputs", len(distributedAssets))
 	for _, assetGroup := range distributedAssets {
 		apolloBE = apolloBE.PayToAddress(*addr, 2_000_000, assetGroup...)
 	}
 
 	_, err := apolloBE.Complete()
-
-	// if err != nil {
-	// 	log.Println(err)
-	// 	return err
-	// }
-	// tx := apolloBE.GetTx()
-	// cbor, err := Utils.ToCbor(tx)
-	// if err != nil {
-	// 	log.Println(err)
-	// 	return err
-	// }
-	// log.Println("Tx CBOR:", cbor)
+	if err != nil {
+		slog.Error("Transaction completion failed", "error", err)
+	} else {
+		slog.Debug("Transaction completed successfully")
+	}
 
 	return err
 }
 
 func MultiAssetToUnits(ma MultiAsset.MultiAsset[int64]) []apollo.Unit {
+	// slog.Debug("Converting multi-asset to units", "multiAsset", ma) // Too verbose
 	units := make([]apollo.Unit, 0, len(ma))
 	for policyId, assets := range ma {
 		if policyId.Value == "" {
@@ -210,6 +254,7 @@ func MultiAssetToUnits(ma MultiAsset.MultiAsset[int64]) []apollo.Unit {
 }
 
 func MergeUnits(units []apollo.Unit) []apollo.Unit {
+	slog.Debug("Merging units", "initialCount", len(units))
 	unitMap := make(map[string]apollo.Unit, len(units))
 
 	for _, unit := range units {
@@ -226,16 +271,18 @@ func MergeUnits(units []apollo.Unit) []apollo.Unit {
 	for _, unit := range unitMap {
 		mergedUnits = append(mergedUnits, unit)
 	}
+	slog.Debug("Units merged", "finalCount", len(mergedUnits))
 	return mergedUnits
 }
 
 // Distribute assets across multiple outputs
 func DistributeAssets(units []apollo.Unit, utxoCount int) [][]apollo.Unit {
+	slog.Debug("Distributing assets", "totalUnits", len(units), "utxoCount", utxoCount)
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	outputs := make([][]apollo.Unit, utxoCount)
 
-	for _, unit := range units {
+	for _, unit := range units { // Corrected: 'unit' is now correctly scoped
 		remaining := unit.Quantity
 		for remaining > 0 {
 			idx := rnd.Intn(utxoCount)
@@ -248,7 +295,7 @@ func DistributeAssets(units []apollo.Unit, utxoCount int) [][]apollo.Unit {
 			remaining -= quantity
 		}
 	}
-
+	slog.Debug("Assets distributed", "numOutputs", len(outputs))
 	return outputs
 }
 
