@@ -1,7 +1,7 @@
 {
-  "wall_clock_tps": 905.4571760121105,
-  "latency_tps": 106.28434910880041,
-  "avg_latency": 9408723,
+  "wall_clock_tps": 1683.466558000292,
+  "latency_tps": 176.99813638662198,
+  "avg_latency": 5649777,
   "failures": 0,
   "iterations": 10000,
   "parallelism": 10,
@@ -12,7 +12,7 @@
     "OS": "linux",
     "CPUModel": "Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz",
     "TotalMemory": 33628123136,
-    "AvailableMem": 21249077248
+    "AvailableMem": 22401990656
   },
-  "bench_duration": 11044144621
+  "bench_duration": 5940123938
 }

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e # Exit on error
 
-# Determine directories (assuming script is in apollo/scripts/)
+# Determine directories
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)" # Root is 'apollo'
 RESULTS_DIR="$SCRIPT_DIR/results"
@@ -11,7 +11,7 @@ BIN_DIR="$ROOT_DIR/bin"
 CYAN="\033[1;36m"
 GREEN="\033[1;32m"
 RED="\033[1;31m"
-WHITE="\033[1;37m" # Added WHITE color
+WHITE="\033[1;37m"
 RESET="\033[0m"
 
 # Function to display a loading animation
@@ -21,18 +21,17 @@ show_progress() {
     shift 2
     local args=("$@")
     local delay=0.1
-    local spin_chars=".oOo.-\\||//-.oOo." # Cooler ASCII spin characters
+    local spin_chars=".oOo.-\\||//-.oOo."
     local i=0
-    tput civis # Hide cursor
+    tput civis
     while kill -0 "$pid" 2>/dev/null; do
         i=$(( (i+1) % ${#spin_chars} ))
-        # Use printf -v to format the message with arguments, then print it
         printf -v formatted_message "$base_message" "${args[@]}"
         printf "\r${CYAN}[%s] %s %c${RESET}" "$(date '+%Y-%m-%d %H:%M:%S')" "$formatted_message" "${spin_chars:$i:1}"
         sleep "$delay"
     done
-    tput cnorm # Show cursor
-    printf "\r%s" "$(tput el)" # Clear the line without a newline
+    tput cnorm
+    printf "\r%s" "$(tput el)"
 }
 
 # Function to print a static status message with colors
@@ -53,7 +52,6 @@ draw_box() {
 
     local max_len=0
     for line in "${lines[@]}"; do
-        # Remove ANSI escape codes for length calculation
         local clean_line
         clean_line=$(printf "%s" "$line" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g")
         if (( ${#clean_line} > max_len )); then
@@ -61,7 +59,7 @@ draw_box() {
         fi
     done
 
-    local horizontal_line_length=$((max_len + 2)) # +2 for padding on each side
+    local horizontal_line_length=$((max_len + 2))
     local horizontal_line
     printf -v horizontal_line "%*s" "$horizontal_line_length" ""
     horizontal_line=${horizontal_line// /─}
@@ -74,6 +72,35 @@ draw_box() {
     done
     printf "${CYAN}└%s┘${RESET}\n" "$horizontal_line"
 }
+
+# Function to check for a command and install if missing
+check_and_install_cmd() {
+    local cmd=$1
+    local install_cmd=$2
+    if ! command -v "$cmd" &> /dev/null; then
+        print_status "$RED" "%s is not installed. Attempting to install..." "$cmd"
+        if [ -n "$install_cmd" ]; then
+            if eval "$install_cmd"; then
+                print_status "$GREEN" "%s installed successfully." "$cmd"
+            else
+                print_status "$RED" "Failed to install %s. Please install it manually and rerun the script." "$cmd"
+                exit 1
+            fi
+        else
+            print_status "$RED" "Installation command for %s not provided. Please install it manually and rerun the script." "$cmd"
+            exit 1
+        fi
+    else
+        print_status "$GREEN" "%s is already installed." "$cmd"
+    fi
+}
+
+# Check for required tools
+print_status "$CYAN" "Checking for required command-line tools..."
+check_and_install_cmd "go" "sudo apt-get update && sudo apt-get install -y golang-go" # Example for Debian/Ubuntu
+check_and_install_cmd "jq" "sudo apt-get update && sudo apt-get install -y jq" # Example for Debian/Ubuntu
+print_status "$GREEN" "All required command-line tools are present."
+
 
 # Create a temporary directory for temporary files
 TMP_DIR=$(mktemp -d -t apollo-benchmark-XXXXXXXXXX)
@@ -93,13 +120,25 @@ fi
 
 # The versions array is created from all command-line arguments
 VERSIONS=("$@")
-NUM_TRIALS=5 # Number of benchmark trials per version
+NUM_TRIALS=10 # Number of benchmark trials per version
 
 # Color variables
 CYAN="\033[1;36m"
 GREEN="\033[1;32m"
 RED="\033[1;31m"
 RESET="\033[0m"
+
+# Define benchmark parameters
+UTXO_INPUT=20
+UTXO_OUTPUT=20
+UTXO_LEVEL=2
+ITERATIONS=10000
+PARALLELISM=10
+OUTPUT_FORMAT="json"
+
+print_status "$CYAN" "Benchmark Parameters: UTXO Input: %d, UTXO Output: %d, UTXO Level: %d, Iterations: %d, Parallelism: %d, Output: %s" \
+    "$UTXO_INPUT" "$UTXO_OUTPUT" "$UTXO_LEVEL" "$ITERATIONS" "$PARALLELISM" "$OUTPUT_FORMAT"
+
 
 for version in "${VERSIONS[@]}"; do
     # Save original go.mod and go.sum to the temporary directory
@@ -146,17 +185,6 @@ for version in "${VERSIONS[@]}"; do
     print_status "$GREEN" "Binary built successfully for version: %s" "$version"
 
     print_status "$CYAN" "Benchmarking version: %s with %d trials..." "$version" "$NUM_TRIALS"
-
-    # Define benchmark parameters
-    UTXO_INPUT=20
-    UTXO_OUTPUT=20
-    UTXO_LEVEL=2
-    ITERATIONS=10000
-    PARALLELISM=10
-    OUTPUT_FORMAT="json"
-
-    print_status "$CYAN" "Benchmark Parameters: UTXO Input: %d, UTXO Output: %d, UTXO Level: %d, Iterations: %d, Parallelism: %d, Output: %s" \
-        "$UTXO_INPUT" "$UTXO_OUTPUT" "$UTXO_LEVEL" "$ITERATIONS" "$PARALLELISM" "$OUTPUT_FORMAT"
 
     for i in $(seq 1 $NUM_TRIALS); do
         (
@@ -264,11 +292,11 @@ TEMP_OUTPUT_FILE="$TMP_DIR/temp_analysis_output.txt" # Use temporary directory
     fi
 ) > "$TEMP_OUTPUT_FILE" # Redirect analysis output to a temporary file
 
-wait # Wait for the subshell to finish writing to TEMP_OUTPUT_FILE
+wait
 
 echo ""
 
-RESULT_OUTPUT=$(cat "$TEMP_OUTPUT_FILE") # Capture the output of the analysis block from the temp file
+RESULT_OUTPUT=$(cat "$TEMP_OUTPUT_FILE")
 
 # Print the colored output to the console
 BOXED_OUTPUT=$(draw_box "$RESULT_OUTPUT")
@@ -277,7 +305,6 @@ printf "%s\n" "$BOXED_OUTPUT"
 # Strip color codes and write to file
 printf "%s" "$RESULT_OUTPUT" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" > "$RESULTS_FILE"
 
-# Clean up the temporary file
 rm "$TEMP_OUTPUT_FILE"
 
 echo ""
