@@ -3,7 +3,6 @@ package benchmark
 import (
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -13,9 +12,9 @@ import (
 	"github.com/Salvionied/apollo"
 	"github.com/Salvionied/apollo/serialization"
 	"github.com/Salvionied/apollo/serialization/Address"
-	"github.com/Salvionied/apollo/serialization/MultiAsset"
 	"github.com/Salvionied/apollo/serialization/UTxO"
 	"github.com/Salvionied/apollo/txBuilding/Backend/Base"
+	"github.com/Salvionied/apollo/txBuilding/Backend/FixedChainContext"
 )
 
 type Result struct {
@@ -23,30 +22,18 @@ type Result struct {
 	Error    error
 }
 
-func Run(utxoCount, iterations, parallelism int, backend string, outputFormat string, cpuProfile string,
-	maestroNetworkID int, maestroAPIKey string,
-	blockfrostAPIURL string, blockfrostNetworkID int, blockfrostAPIKey string,
-	ogmiosEndpoint string, kugoEndpoint string,
-	utxorpcEndpoint string, utxorpcNetworkID int, utxorpcAPIKey string) {
+func Run(utxoInput, utxoOutput, iterations, parallelism int, outputFormat string, cpuProfile string, utxoLevel int) {
 
 	slog.Info("Starting benchmark run",
-		"utxoCount", utxoCount,
+		"utxoInput", utxoInput,
+		"utxoOutput", utxoOutput,
 		"iterations", iterations,
 		"parallelism", parallelism,
-		"backend", backend,
 		"outputFormat", outputFormat,
-		"cpuProfile", cpuProfile)
+		"cpuProfile", cpuProfile,
+		"utxoLevel", utxoLevel)
 
-	ctx, err := GetChainContext(backend,
-		maestroNetworkID, maestroAPIKey,
-		blockfrostAPIURL, blockfrostNetworkID, blockfrostAPIKey,
-		ogmiosEndpoint, kugoEndpoint,
-		utxorpcEndpoint, utxorpcNetworkID, utxorpcAPIKey)
-	if err != nil {
-		slog.Error("Critical error getting backend chain context", "error", err)
-		os.Exit(1)
-	}
-	slog.Info("Chain context obtained successfully", "backend", backend)
+	ctx := FixedChainContext.InitFixedChainContext()
 
 	senderWalletAddress, err := Address.DecodeAddress(TEST_WALLET_ADDRESS_1)
 	if err != nil {
@@ -62,27 +49,21 @@ func Run(utxoCount, iterations, parallelism int, backend string, outputFormat st
 	}
 	slog.Debug("Receiver wallet address decoded", "address", receiverWalletAddress.String())
 
-	userUtxos, err := ctx.Utxos(senderWalletAddress)
-	if err != nil {
-		slog.Error("Failed to get UTXOs", "error", err)
+	var userUtxos []UTxO.UTxO
+
+	switch utxoLevel {
+	case 1: // Simple
+		userUtxos = InitUtxos(utxoInput)
+	case 2: // Differentiated
+		userUtxos = InitUtxosDifferentiated(utxoInput)
+	case 3: // Congested
+		userUtxos = InitUtxosCongested(utxoInput)
+	default:
+		slog.Error("Invalid UTXO level", "level", utxoLevel)
 		os.Exit(1)
 	}
+
 	slog.Info("Fetched user UTXOs", "count", len(userUtxos))
-
-	// Aggregate & merge assets upfront
-	var assetList []apollo.Unit
-	for _, utxo := range userUtxos {
-		assetList = append(assetList, MultiAssetToUnits(utxo.Output.GetValue().GetAssets())...)
-	}
-	assetList = MergeUnits(assetList)
-	slog.Debug("Aggregated and merged assets", "count", len(assetList))
-
-	lastSlot, err := ctx.LastBlockSlot()
-	if err != nil {
-		slog.Error("Failed to get last block slot", "error", err)
-		os.Exit(1)
-	}
-	slog.Info("Last block slot obtained", "slot", lastSlot)
 
 	// Warm-up phase before any measurements
 	runtime.GC()
@@ -140,7 +121,7 @@ func Run(utxoCount, iterations, parallelism int, backend string, outputFormat st
 			copy(clonedUTxOs, userUtxos)
 
 			start := time.Now()
-			err := buildTransaction(clonedUTxOs, &receiverWalletAddress, ctx, lastSlot, utxoCount, assetList)
+			err := buildTransaction(clonedUTxOs, &receiverWalletAddress, ctx, utxoOutput)
 			elapsed := time.Since(start)
 
 			mu.Lock()
@@ -192,7 +173,8 @@ func Run(utxoCount, iterations, parallelism int, backend string, outputFormat st
 		"failures", failures,
 		"iterations", iterations,
 		"parallelism", parallelism,
-		"utxoCount", utxoCount,
+		"utxoInput", utxoInput,
+		"utxoOutput", utxoOutput,
 		"benchDuration", benchDuration,
 		"outputFormat", outputFormat)
 
@@ -203,28 +185,26 @@ func Run(utxoCount, iterations, parallelism int, backend string, outputFormat st
 		failures,
 		iterations,
 		parallelism,
-		utxoCount,
+		utxoInput,
+		utxoOutput,
 		benchDuration,
 		outputFormat,
 	)
 }
 
-func buildTransaction(utxos []UTxO.UTxO, addr *Address.Address, ctx Base.ChainContext, lastSlot int, utxoCount int, assets []apollo.Unit) error {
-	slog.Debug("Building transaction", "address", addr.String(), "utxoCount", utxoCount)
+func buildTransaction(utxos []UTxO.UTxO, addr *Address.Address, ctx Base.ChainContext, utxoOutput int) error {
+	slog.Debug("Building transaction", "address", addr.String(), "utxoOutput", utxoOutput)
+
 	apolloBE := apollo.New(ctx).
 		SetWalletFromBech32(addr.String()).
 		AddLoadedUTxOs(utxos...).
 		SetChangeAddress(*addr).
-		AddRequiredSigner(serialization.PubKeyHash(addr.PaymentPart)).
-		SetTtl(int64(lastSlot) + 300)
+		AddRequiredSigner(serialization.PubKeyHash(addr.PaymentPart))
 
 	// Add multiple outputs
-	distributedAssets := DistributeAssets(assets, utxoCount)
-	slog.Debug("Distributed assets for transaction", "numOutputs", len(distributedAssets))
-	for _, assetGroup := range distributedAssets {
-		apolloBE = apolloBE.PayToAddress(*addr, 2_000_000, assetGroup...)
+	for i := 0; i < utxoOutput; i++ {
+		apolloBE = apolloBE.PayToAddress(*addr, 2_000_000)
 	}
-
 	_, err := apolloBE.Complete()
 	if err != nil {
 		slog.Error("Transaction completion failed", "error", err)
@@ -233,75 +213,4 @@ func buildTransaction(utxos []UTxO.UTxO, addr *Address.Address, ctx Base.ChainCo
 	}
 
 	return err
-}
-
-func MultiAssetToUnits(ma MultiAsset.MultiAsset[int64]) []apollo.Unit {
-	// slog.Debug("Converting multi-asset to units", "multiAsset", ma) // Too verbose
-	units := make([]apollo.Unit, 0, len(ma))
-	for policyId, assets := range ma {
-		if policyId.Value == "" {
-			continue
-		}
-		for assetName, quantity := range assets {
-			units = append(units, apollo.Unit{
-				PolicyId: policyId.Value,
-				Name:     assetName.String(),
-				Quantity: int(quantity),
-			})
-		}
-	}
-	return units
-}
-
-func MergeUnits(units []apollo.Unit) []apollo.Unit {
-	slog.Debug("Merging units", "initialCount", len(units))
-	unitMap := make(map[string]apollo.Unit, len(units))
-
-	for _, unit := range units {
-		key := unit.PolicyId + ":" + unit.Name
-		if existing, found := unitMap[key]; found {
-			existing.Quantity += unit.Quantity
-			unitMap[key] = existing
-		} else {
-			unitMap[key] = unit
-		}
-	}
-
-	mergedUnits := make([]apollo.Unit, 0, len(unitMap))
-	for _, unit := range unitMap {
-		mergedUnits = append(mergedUnits, unit)
-	}
-	slog.Debug("Units merged", "finalCount", len(mergedUnits))
-	return mergedUnits
-}
-
-// Distribute assets across multiple outputs
-func DistributeAssets(units []apollo.Unit, utxoCount int) [][]apollo.Unit {
-	slog.Debug("Distributing assets", "totalUnits", len(units), "utxoCount", utxoCount)
-	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-
-	outputs := make([][]apollo.Unit, utxoCount)
-
-	for _, unit := range units { // Corrected: 'unit' is now correctly scoped
-		remaining := unit.Quantity
-		for remaining > 0 {
-			idx := rnd.Intn(utxoCount)
-			quantity := min(remaining, rnd.Intn(remaining/2+1)+1)
-			outputs[idx] = append(outputs[idx], apollo.Unit{
-				PolicyId: unit.PolicyId,
-				Name:     unit.Name,
-				Quantity: quantity,
-			})
-			remaining -= quantity
-		}
-	}
-	slog.Debug("Assets distributed", "numOutputs", len(outputs))
-	return outputs
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

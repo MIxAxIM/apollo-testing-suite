@@ -1,0 +1,18 @@
+{
+  "wall_clock_tps": 1010.2099364465938,
+  "latency_tps": 120.83037047195738,
+  "avg_latency": 8276065,
+  "failures": 0,
+  "iterations": 10000,
+  "parallelism": 10,
+  "utxo_input": 20,
+  "utxo_output": 20,
+  "system_info": {
+    "GoVersion": "go1.24.7",
+    "OS": "linux",
+    "CPUModel": "Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz",
+    "TotalMemory": 33628123136,
+    "AvailableMem": 21249757184
+  },
+  "bench_duration": 9898932528
+}

@@ -19,13 +19,14 @@ type BenchmarkResult struct {
 	Failures      int           `json:"failures"`
 	Iterations    int           `json:"iterations"`
 	Parallelism   int           `json:"parallelism"`
-	UTXOCount     int           `json:"utxo_count"`
+	UTXOInput     int           `json:"utxo_input"`
+	UTXOOutput    int           `json:"utxo_output"`
 	SystemInfo    SystemInfo    `json:"system_info"`
 	BenchDuration time.Duration `json:"bench_duration"`
 }
 
 func PrintResults(wallClockTPS, latencyTPS float64, avgLatency time.Duration,
-	failures, iterations, parallelism, utxoCount int, benchDuration time.Duration,
+	failures, iterations, parallelism, utxoInput, utxoOutput int, benchDuration time.Duration,
 	format string) {
 
 	result := BenchmarkResult{
@@ -35,7 +36,8 @@ func PrintResults(wallClockTPS, latencyTPS float64, avgLatency time.Duration,
 		Failures:      failures,
 		Iterations:    iterations,
 		Parallelism:   parallelism,
-		UTXOCount:     utxoCount,
+		UTXOInput:     utxoInput,
+		UTXOOutput:    utxoOutput,
 		SystemInfo:    GetSystemInfo(),
 		BenchDuration: benchDuration,
 	}
@@ -92,7 +94,8 @@ func printColorfulTable(result BenchmarkResult) {
 	addSectionHeader("BENCHMARK CONFIGURATION")
 	addRow(table, "Iterations", strconv.Itoa(result.Iterations), "")
 	addRow(table, "Parallel Workers", strconv.Itoa(result.Parallelism), "")
-	addRow(table, "Outputs per TX", strconv.Itoa(result.UTXOCount), "")
+	addRow(table, "Inputs per TX", strconv.Itoa(result.UTXOInput), "")
+	addRow(table, "Outputs per TX", strconv.Itoa(result.UTXOOutput), "")
 	addRow(table, "Total Duration", result.BenchDuration.Round(time.Millisecond).String(), "")
 
 	// System Info Section
