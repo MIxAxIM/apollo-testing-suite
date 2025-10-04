@@ -1,0 +1,6 @@
+package benchmark
+
+const (
+	TEST_WALLET_ADDRESS_1 string = "addr_test1qrp4wsrz6vsjjkhja7j60tyfvnhzf7v97asw29r56kd7pw5rrml46886jg3mwuaq9svtznns6p53gxx7ut9y6pv9e9rsukn05x"
+	TEST_WALLET_ADDRESS_2 string = "addr_test1qpnm02rczmengl36csawldwaua3c3r94z0t02xjsn8j73e45ukjy2uwvgjlc70me2wsdcvdfqgjtmvv704dvfcxur0qsznjzdd"
+)

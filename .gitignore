@@ -1,1 +1,2 @@
-bin/
+apollo-bench/bin
+plutus-v3-sc-tx-builder/bin
