@@ -4,13 +4,13 @@ This repository contains a suite of tools and examples for testing and benchmark
 
 ## Project Structure
 
-- [`utxorpc/`](utxorpc/): Contains an example Go program demonstrating how to interact with the Cardano blockchain using the Apollo library and Utxorpc.
+- [`utxo-rpc-based-tx-builder/`](utxo-rpc-based-tx-builder/): Contains an example Go program demonstrating how to interact with the Cardano blockchain using the Apollo library and Utxorpc.
 - [`plutus-v3-sc-tx-builder/`](plutus-v3-sc-tx-builder/): Provides a transaction builder for Plutus V3 smart contracts.
 - [`apollo-bench/`](apollo-bench/): Houses the `Apollo-Bench` benchmarking tool for stress-testing the Apollo library's performance.
 
 ## UTXO RPC Example
 
-The `utxorpc` directory provides a simple Go application that showcases the use of the Apollo library to perform basic Cardano blockchain operations, such as:
+The `utxo-rpc-based-tx-builder` directory provides a simple Go application that showcases the use of the Apollo library to perform basic Cardano blockchain operations, such as:
 
 - Wallet setup using mnemonics.
 - Fetching UTXOs for a given address.
